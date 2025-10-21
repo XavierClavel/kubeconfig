@@ -1,0 +1,17 @@
+spec:
+  template:
+    spec:
+      containers:
+        - name: traefik
+          volumeMounts:
+            - name: traefik-data
+              mountPath: /data
+          args:
+            - "--configFile=/config/traefik.yml"
+      volumes:
+        - name: traefik-data
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: traefik-config
+
