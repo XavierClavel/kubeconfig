@@ -6,7 +6,7 @@ metadata:
     strimzi.io/cluster: cooknco-kafka
 spec:
   partitions: 3
-  replicas: 3
+  replicas: 1
 ---
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
@@ -16,7 +16,7 @@ metadata:
     strimzi.io/cluster: cooknco-kafka
 spec:
   partitions: 3
-  replicas: 3
+  replicas: 1
 ---
 apiVersion: kafka.strimzi.io/v1beta2
 kind: KafkaTopic
@@ -26,4 +26,4 @@ metadata:
     strimzi.io/cluster: cooknco-kafka
 spec:
   partitions: 3
-  replicas: 3
+  replicas: 1
