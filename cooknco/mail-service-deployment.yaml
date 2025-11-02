@@ -36,9 +36,8 @@ spec:
                   name: mail-database-secrets
                   key: jdbc_url
           envFrom:
-            - secretKeyRef:
+            - secretRef:
                 name: cooknco-secrets
-          envFrom:
             - configMapRef:
                 name: smtp-secrets
           readinessProbe:
