@@ -17,22 +17,9 @@ spec:
           image: postgres:17.2
           ports:
             - containerPort: 5432
-          env:
-            - name: POSTGRES_DB
-              valueFrom:
-                secretKeyRef:
-                  name: mail-database-secrets
-                  key: postgres_db
-            - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: mail-database-secrets
-                  key: postgres_user
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mail-database-secrets
-                  key: postgres_password
+          envFrom:
+            - secretRef:
+                name: mail-database-secrets
           volumeMounts:
             - name: mail-service-data
               mountPath: /var/lib/postgresql/data
