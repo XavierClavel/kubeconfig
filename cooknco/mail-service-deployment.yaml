@@ -19,25 +19,11 @@ spec:
           command: ["java", "-jar", "/app/mail-service.jar"]          
           ports:
             - containerPort: 8080
-          env:
-            - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: mail-database-secrets
-                  key: postgres_user
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mail-database-secrets
-                  key: postgres_password
-            - name: JDBC_URL
-              valueFrom:
-                secretKeyRef:
-                  name: mail-database-secrets
-                  key: jdbc_url
           envFrom:
             - secretRef:
                 name: cooknco-secrets
+            - secretRef:
+                name: mail-database-secrets
             - configMapRef:
                 name: smtp-secrets
           readinessProbe:
