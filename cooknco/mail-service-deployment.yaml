@@ -20,8 +20,6 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            - name: KAFKA_BOOTSTRAP_SERVERS
-              value: kafka-kraft-kafka-bootstrap.kafka.svc.cluster.local:9092
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
