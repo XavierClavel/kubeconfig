@@ -21,18 +21,18 @@ spec:
             - name: POSTGRES_DB
               valueFrom:
                 secretKeyRef:
-                  name: cooknco-secrets
-                  key: mail-postgres-db
+                  name: mail-database-secrets
+                  key: postgres_db
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: cooknco-secrets
-                  key: mail-postgres-user
+                  name: mail-database-secrets
+                  key: postgres_user
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: cooknco-secrets
-                  key: mail-postgres-password
+                  name: mail-database-secrets
+                  key: postgres_password
           volumeMounts:
             - name: mail-service-data
               mountPath: /var/lib/postgresql/data
@@ -56,4 +56,14 @@ spec:
   ports:
     - port: 5432
       targetPort: 5432
-
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mail-service-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
