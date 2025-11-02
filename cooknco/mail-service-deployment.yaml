@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: mail-service
-          image: xavierclavel/cooknco-mail-service:1.0.0
+          image: xavierclavel/cooknco-mail-service:latest
           imagePullPolicy: Always
           command: ["java", "-jar", "/app/mail-service.jar"]          
           ports:
