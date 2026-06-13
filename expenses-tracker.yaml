@@ -1,0 +1,208 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: expenses-tracker-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: expenses-tracker-backend
+  template:
+    metadata:
+      labels:
+        app: expenses-tracker-backend
+    spec:
+      containers:
+        - name: backend
+          image: xavierclavel/expenses-tracker-backend:0.0.1
+          imagePullPolicy: Always
+          command: ["java", "-jar", "/app/backend.jar"]
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: expenses-tracker-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: expenses-tracker-backend
+spec:
+  selector:
+    app: expenses-tracker-backend
+  ports:
+    - port: 9000
+      targetPort: 8080
+
+---
+
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: expenses-tracker-nodeport
+spec:
+  type: NodePort
+  selector:
+    app: expenses-tracker-backend
+  ports:
+    - port: 9000
+      targetPort: 8080
+      nodePort: 30081
+
+
+
+
+
+
+
+
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: expenses-tracker-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: expenses-tracker-redis
+  template:
+    metadata:
+      labels:
+        app: expenses-tracker-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:alpine
+          args: ["redis-server", "--appendonly", "yes", "--requirepass", "$(REDIS_PASSWORD)"]
+          envFrom:
+            - secretRef:
+                name: expenses-tracker-secrets
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: expenses-tracker-redis-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: expenses-tracker-redis
+spec:
+  selector:
+    app: expenses-tracker-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: expenses-tracker-redis-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+
+
+
+
+
+
+
+---
+
+
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: expenses-tracker-database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: expenses-tracker-database
+  template:
+    metadata:
+      labels:
+        app: expenses-tracker-database
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17.2
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: expenses-tracker-secrets
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: expenses-tracker-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: expenses-tracker-database
+  labels:
+    type: local
+spec:
+  selector:
+    app: expenses-tracker-database
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: expenses-tracker-postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
