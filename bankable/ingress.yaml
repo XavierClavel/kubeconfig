@@ -12,7 +12,7 @@ metadata:
 spec:
   tls:
   - hosts:
-    - "bankable.fyi"
+    - "moneymind.fyi"
     secretName: bankable-tls
   rules:
     - host: moneymind.fyi
