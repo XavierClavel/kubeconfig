@@ -15,7 +15,7 @@ spec:
     - "bankable.fyi"
     secretName: bankable-tls
   rules:
-    - host: bankable.fyi
+    - host: moneymind.fyi
       http:
         paths:
           - path: /
