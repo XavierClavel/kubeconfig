@@ -1,0 +1,13 @@
+# Strimzi Helm values.
+
+# The operator runs in the `kafka` namespace but watches every namespace, so a
+# project can declare its own KafkaTopic / KafkaUser resources next to its
+# Deployment instead of having to put them in `kafka`.
+watchAnyNamespace: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    memory: 512Mi

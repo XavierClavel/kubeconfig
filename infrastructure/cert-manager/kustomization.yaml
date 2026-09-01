@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# ClusterIssuers are cluster scoped; the cert-manager controllers themselves are
+# installed by bootstrap/install.sh.
+resources:
+  - cluster-issuer-letsencrypt-prod.yaml
+  - cluster-issuer-letsencrypt-staging.yaml

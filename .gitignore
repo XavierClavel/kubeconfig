@@ -1,0 +1,14 @@
+# IDE
+.idea/
+*.iml
+
+# Never commit cluster credentials -- they belong in the KUBE_CONFIG secret.
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+.kube/
+k3s.yaml
+
+# Rendered output
+rendered.yaml
+*.diff

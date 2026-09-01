@@ -1,0 +1,16 @@
+# Root overlay: everything shared between projects, for the single k3s cluster.
+#
+#   kubectl kustomize .        # render
+#   kubectl diff -k .          # preview against the live cluster
+#   kubectl apply -k .         # apply
+#
+# Operators and CRDs are NOT here -- they are Helm releases installed by
+# bootstrap/install.sh, which must run before the first apply on a new cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - infrastructure/namespaces
+  - infrastructure/cert-manager
+  - infrastructure/traefik
+  - infrastructure/kafka

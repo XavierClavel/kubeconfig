@@ -1,0 +1,207 @@
+name: Deploy cluster configuration
+
+# Pull requests render the manifests and show a diff against the live cluster.
+# Pushes to master apply them. Nothing is ever pruned -- deleting a resource
+# from git does not delete it from the cluster, see README.md.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'infrastructure/**'
+      - 'bootstrap/**'
+      - 'kustomization.yaml'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    paths:
+      - 'infrastructure/**'
+      - 'bootstrap/**'
+      - 'kustomization.yaml'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      run_bootstrap:
+        description: 'Run the Helm bootstrap (operators + CRDs) before applying'
+        type: boolean
+        default: false
+
+concurrency:
+  # One deploy at a time; a superseded PR diff can be dropped, a deploy cannot.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  KUBECTL_VERSION: v1.31.4
+  HELM_VERSION: v3.16.3
+
+jobs:
+  # ---------------------------------------------------------------- validate
+  # Runs with no cluster access, so it also protects pull requests from forks.
+  validate:
+    name: Render and validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Render manifests
+        run: |
+          kubectl kustomize . > rendered.yaml
+          echo "Rendered $(grep -c '^kind:' rendered.yaml) resources."
+          {
+            echo '### Rendered manifests'
+            echo '```yaml'
+            cat rendered.yaml
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate against Kubernetes schemas
+        run: |
+          curl -fsSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz kubeconform
+          # Strimzi and cert-manager CRDs are not in the upstream schema store
+          # and are not installed on the runner, hence -ignore-missing-schemas.
+          # Everything with a built-in schema is still checked strictly.
+          ./kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -summary \
+            rendered.yaml
+
+      - name: Check shell scripts
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck bootstrap/install.sh .github/scripts/write-kubeconfig.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rendered-manifests
+          path: rendered.yaml
+          retention-days: 14
+
+  # -------------------------------------------------------------------- diff
+  diff:
+    name: Diff against cluster
+    runs-on: ubuntu-latest
+    needs: validate
+    # Forked PRs have no access to secrets; skip rather than fail.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    environment: k3s
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: .github/scripts/write-kubeconfig.sh
+
+      - name: kubectl diff
+        run: |
+          # kubectl diff exits 1 when there are differences, which is the normal
+          # case on a PR, and >1 on a real error.
+          set +e
+          kubectl diff -k . > cluster.diff 2>&1
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then
+            cat cluster.diff
+            echo "::error::kubectl diff failed with exit code $status"
+            exit "$status"
+          fi
+          if [ ! -s cluster.diff ]; then
+            echo 'No changes: the cluster already matches this branch.' \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo '### Pending changes'
+            echo '```diff'
+            cat cluster.diff
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat cluster.diff
+
+  # ------------------------------------------------------------------ deploy
+  deploy:
+    name: Apply to cluster
+    runs-on: ubuntu-latest
+    needs: validate
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/master')
+    environment: k3s
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed to diff the pushed range and decide whether bootstrap must run.
+          fetch-depth: 0
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Configure kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: .github/scripts/write-kubeconfig.sh
+
+      - name: Decide whether to run bootstrap
+        id: plan
+        env:
+          BEFORE: ${{ github.event.before }}
+          DISPATCH_REQUESTED: ${{ inputs.run_bootstrap }}
+        run: |
+          run_bootstrap=false
+          if [ "${{ github.event_name }}" = 'workflow_dispatch' ]; then
+            [ "$DISPATCH_REQUESTED" = 'true' ] && run_bootstrap=true
+          elif ! git rev-parse --quiet --verify "${BEFORE}^{commit}" >/dev/null; then
+            # Force push, new branch, or a shallow history: be conservative.
+            run_bootstrap=true
+          elif ! git diff --quiet "$BEFORE" "$GITHUB_SHA" -- bootstrap/; then
+            run_bootstrap=true
+          fi
+          echo "run_bootstrap=$run_bootstrap" >> "$GITHUB_OUTPUT"
+          echo "Bootstrap will run: $run_bootstrap"
+
+      - name: Bootstrap operators
+        if: steps.plan.outputs.run_bootstrap == 'true'
+        run: ./bootstrap/install.sh
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -k . --server-side --force-conflicts \
+            --field-manager=github-actions | tee apply.log
+          {
+            echo '### Applied'
+            echo '```'
+            cat apply.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report cluster state
+        run: |
+          {
+            echo '### Cluster state'
+            echo '```'
+            kubectl get clusterissuer 2>&1 || true
+            echo
+            kubectl get kafka,kafkanodepool -n kafka 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

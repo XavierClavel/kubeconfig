@@ -1,0 +1,19 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: kraft-nodes
+  labels:
+    strimzi.io/cluster: kafka-kraft
+spec:
+  replicas: 1
+  roles:
+    - broker
+    - controller
+  # DO NOT switch this to `type: jbod`, even though the Strimzi docs favour it.
+  # The storage type determines the PVC name: `persistent-claim` produces
+  # data-kafka-kraft-kraft-nodes-0, jbod produces data-0-kafka-kraft-kraft-nodes-0.
+  # Changing it orphans the existing volume and starts Kafka on an empty disk.
+  storage:
+    type: persistent-claim
+    size: 10Gi
+    deleteClaim: false

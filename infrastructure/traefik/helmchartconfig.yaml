@@ -1,0 +1,40 @@
+# k3s ships Traefik as a bundled HelmChart. Never edit that HelmChart or the
+# Deployment directly: k3s reconciles both on every restart and the changes are
+# lost. HelmChartConfig is the supported extension point -- its valuesContent is
+# merged into the chart values k3s uses.
+#
+# TLS is deliberately NOT handled here. cert-manager is the single source of
+# truth: it writes certificates into per-namespace Secrets that Ingress
+# resources reference via `spec.tls[].secretName`. Do not re-add an
+# `certificatesResolvers` / ACME block below.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    ports:
+      web:
+        # Let's Encrypt follows redirects when validating an HTTP-01 challenge
+        # (and does not verify the certificate it lands on), so redirecting
+        # every :80 request is safe even before a certificate exists.
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+            permanent: true
+      websecure:
+        tls:
+          enabled: true
+    # Uncomment to preserve the real client IP in access logs and in
+    # X-Forwarded-For. Safe on a single-node k3s; on a multi-node cluster it
+    # drops traffic on nodes that are not running a Traefik pod.
+    # service:
+    #   spec:
+    #     externalTrafficPolicy: Local
+    logs:
+      general:
+        level: INFO
+      access:
+        enabled: true

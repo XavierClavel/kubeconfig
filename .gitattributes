@@ -1,0 +1,6 @@
+# Shell scripts and manifests are consumed by Linux runners and by the k3s
+# node; CRLF in a shebang line makes the script unrunnable there.
+*.sh   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.env  text eol=lf

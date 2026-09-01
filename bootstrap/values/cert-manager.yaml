@@ -1,0 +1,25 @@
+# cert-manager Helm values.
+crds:
+  enabled: true
+  # Keep CRDs (and therefore Certificate/ClusterIssuer objects) if the release
+  # is ever uninstalled.
+  keep: true
+
+# The HTTP-01 solver Pods and the controllers are tiny; k3s on a single VPS has
+# no room for the defaults' worth of headroom.
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+webhook:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+
+cainjector:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 128Mi

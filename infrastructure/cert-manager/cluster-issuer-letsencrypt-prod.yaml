@@ -1,0 +1,17 @@
+# Production Let's Encrypt issuer. Rate limited (50 certs / domain / week):
+# validate new domains against letsencrypt-staging first.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: xrclavel@gmail.com
+    privateKeySecretRef:
+      # Secret created in the cert-manager namespace holding the ACME account key.
+      name: letsencrypt-prod
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

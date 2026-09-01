@@ -1,0 +1,38 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: kafka-kraft
+  annotations:
+    # Explicit even though both are the default on Strimzi >= 0.46 -- it keeps
+    # the intent readable and makes the manifest safe to replay on an older
+    # operator during a migration.
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    # Pinned. Strimzi 1.1.0 removed support for Kafka 4.1.x, so bumping this
+    # and STRIMZI_VERSION in bootstrap/versions.env must be done together.
+    version: 4.1.0
+    listeners:
+      - name: internal
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      # process.roles, controller.listener.names and inter.broker.listener.name
+      # used to be set here. Strimzi owns those keys (they are on its forbidden
+      # list) and silently ignores them, so they have been dropped.
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      default.replication.factor: 1
+      min.insync.replicas: 1
+    # Ignored when KafkaNodePool is in use -- the node pool below is what
+    # actually provisions storage. Kept because the CRD in Strimzi < 0.46 still
+    # requires the field.
+    storage:
+      type: persistent-claim
+      size: 10Gi
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
