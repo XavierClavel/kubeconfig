@@ -10,12 +10,14 @@ on:
     paths:
       - 'infrastructure/**'
       - 'bootstrap/**'
+      - 'apps/**'
       - 'kustomization.yaml'
       - '.github/workflows/deploy.yml'
   pull_request:
     paths:
       - 'infrastructure/**'
       - 'bootstrap/**'
+      - 'apps/**'
       - 'kustomization.yaml'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
@@ -24,6 +26,10 @@ on:
         description: 'Run the Helm bootstrap (operators + CRDs) before applying'
         type: boolean
         default: false
+      sync_apps:
+        description: 'Bootstrap registered applications that are not yet running'
+        type: boolean
+        default: true
 
 concurrency:
   # One deploy at a time; a superseded PR diff can be dropped, a deploy cannot.
@@ -78,7 +84,42 @@ jobs:
       - name: Check shell scripts
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck bootstrap/install.sh .github/scripts/write-kubeconfig.sh
+          # -x --source-path=SCRIPTDIR so the `source versions.env` in
+          # install.sh is followed rather than reported as SC1091, which
+          # shellcheck exits non-zero on even though it is only info level.
+          shellcheck -x --source-path=SCRIPTDIR \
+            bootstrap/install.sh \
+            .github/scripts/write-kubeconfig.sh \
+            apps/sync.sh
+
+      - name: Check the application registry
+        run: |
+          # Parses apps/registry.conf without a cluster: catches a malformed
+          # line, a duplicate name and a marker missing its kind before the
+          # sync job reaches the cluster.
+          awk '
+            /^[[:space:]]*(#|$)/ { next }
+            NF < 4 {
+              printf "::error::registry.conf:%d: expected 4 fields, got %d\n", NR, NF
+              bad = 1; next
+            }
+            $3 !~ /^[a-z][a-z0-9.-]*\/[a-z0-9][a-z0-9.-]*$/ {
+              printf "::error::registry.conf:%d: marker %s is not <kind>/<name>\n", NR, $3
+              bad = 1
+            }
+            $4 !~ /^(https:\/\/|git@|\.)/ {
+              printf "::error::registry.conf:%d: suspicious url %s\n", NR, $4
+              bad = 1
+            }
+            seen[$1]++ {
+              printf "::error::registry.conf:%d: duplicate app name %s\n", NR, $1
+              bad = 1
+            }
+            END {
+              if (bad) exit 1
+              printf "registry.conf: %d entries, all well-formed\n", length(seen)
+            }
+          ' apps/registry.conf
 
       - uses: actions/upload-artifact@v4
         with:
@@ -203,5 +244,60 @@ jobs:
             kubectl get clusterissuer 2>&1 || true
             echo
             kubectl get kafka,kafkanodepool -n kafka 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------- sync-apps
+  # Bootstraps the applications listed in apps/registry.conf whose manifests
+  # live in their own repositories. Runs after deploy, because an app's
+  # Certificate needs the ClusterIssuer and its KafkaTopics need the Kafka
+  # cluster. Apps already running are skipped, so this is a no-op once the
+  # cluster is populated -- the steady state is each project's own CI
+  # deploying itself.
+  sync-apps:
+    name: Sync application repositories
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.sync_apps)
+    environment: k3s
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Configure kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: .github/scripts/write-kubeconfig.sh
+
+      - name: Configure access to private application repositories
+        env:
+          APPS_REPO_TOKEN: ${{ secrets.APPS_REPO_TOKEN }}
+        run: |
+          # `kubectl apply -k <github url>` shells out to git, which on a runner
+          # is unauthenticated: a public repo resolves, a private one fails with
+          # "authentication required". A PAT with read access to the project
+          # repos, rewritten in as a credential, covers both.
+          if [ -z "${APPS_REPO_TOKEN:-}" ]; then
+            echo '::notice::APPS_REPO_TOKEN is not set; private application' \
+              'repositories in the registry will fail to render.'
+            exit 0
+          fi
+          git config --global \
+            url."https://x-access-token:${APPS_REPO_TOKEN}@github.com/".insteadOf \
+            'https://github.com/'
+          echo 'Private repository access configured.'
+
+      - name: Sync applications
+        run: |
+          ./apps/sync.sh | tee sync.log
+          {
+            echo '### Application sync'
+            echo '```'
+            cat sync.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

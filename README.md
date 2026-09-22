@@ -6,7 +6,11 @@ their Certificates and PVCs) live in their own repositories and are deployed
 from there.
 
 Everything here is applied by [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
-on every push to `master`.
+on every push to `master`. That workflow also **bootstraps** the applications
+listed in [`apps/registry.conf`](apps/registry.conf) when they are not yet
+running — see [Application bootstrap](#application-bootstrap). Their manifests
+are not copied here; each entry points at the overlay in the project's own
+repository.
 
 ## Layout
 
@@ -21,8 +25,11 @@ bootstrap/
   install.sh                    idempotent Helm install of the operators
   versions.env                  pinned chart versions
   values/                       Helm values per operator
+apps/
+  registry.conf                 which app repos to bootstrap, and from where
+  sync.sh                       applies the ones not already running
 .github/
-  workflows/deploy.yml          validate -> diff (PR) / apply (master)
+  workflows/deploy.yml          validate -> diff (PR) / apply + sync (master)
   scripts/write-kubeconfig.sh   turns the KUBE_CONFIG secret into a kubeconfig
 ```
 
@@ -38,7 +45,94 @@ kubectl kustomize .        # render, no cluster needed
 kubectl diff -k .          # preview against the live cluster
 kubectl apply -k .         # apply
 ./bootstrap/install.sh     # (re)install the operators at their pinned versions
+./apps/sync.sh --dry-run   # what application bootstrap would do
+./apps/sync.sh             # bootstrap the applications that are missing
 ```
+
+## Application bootstrap
+
+Applications are owned by their own repositories, but a fresh cluster has to
+get them running somehow. [`apps/registry.conf`](apps/registry.conf) is a table
+of them:
+
+```
+# name            namespace   marker                       url
+cooknco           cooknco     deployment/cooknco-backend   https://github.com/XavierClavel/Cooknco//k8s/overlays/prod?ref=master
+```
+
+[`apps/sync.sh`](apps/sync.sh) walks it and, for each entry, checks whether the
+**marker** resource exists:
+
+- **it exists** → the app is running, and the script leaves it completely alone.
+- **it does not** → `kubectl apply -k <url>`, which fetches and renders the
+  overlay straight from the project repository.
+
+The manifests are never vendored here. The URL is a
+[kustomize remote target](https://github.com/kubernetes-sigs/kustomize/blob/master/examples/remoteBuild.md):
+`//` separates the repository from the path inside it, and `?ref=` pins the
+branch or tag.
+
+### Why it only ever bootstraps
+
+`apps/sync.sh` is deliberately **not** a reconciler, and the registry is
+deliberately **not** part of the root `kustomization.yaml`. Once an app runs,
+its own CI owns the running state — image tags are set with
+`kustomize edit set image` at deploy time and are not committed to the project
+repo. Re-applying from here would roll the running image back to whatever tag
+happens to be in git, undoing the project's last deploy. Hence the marker
+check, and hence `--force` requiring an explicit app name:
+
+```bash
+./apps/sync.sh                    # bootstrap whatever is missing
+./apps/sync.sh --dry-run          # render every target, change nothing
+./apps/sync.sh cooknco            # consider only these entries
+./apps/sync.sh --force cooknco    # re-apply even though it is running
+```
+
+`--force` is the "reset this app to what its repo says" lever. It takes names
+on purpose: a bare `--force` would re-apply every project at once.
+
+### Adding an app
+
+Append a line to `apps/registry.conf`. Three things to get right:
+
+- **The marker** should be something the app cannot be running without — a
+  Deployment is the usual choice — and it must sit in the namespace named in
+  column 2. A marker that never matches means the app is re-applied on every
+  run, which is exactly the rollback described above; a marker that always
+  matches means it is never bootstrapped. Check it against the rendered
+  overlay rather than guessing:
+
+  ```bash
+  kubectl kustomize '<url>' | grep -A3 '^kind: Deployment'
+  ```
+
+- **`ref=` is the branch that project actually deploys from**, not a
+  convention. Most of these are `master`; `PetApp`'s default branch is
+  `develop`.
+
+- **`KafkaTopic` resources need their own entry.** Strimzi's topic operator
+  only reconciles them in the Kafka cluster's namespace, so they cannot live
+  under the app overlay — see the `cooknco-topics` line.
+
+The `validate` job checks the file's shape on every PR. There is nothing to
+register for an app whose repo has no `k8s/` overlay yet.
+
+### Private repositories
+
+`kubectl apply -k <github url>` shells out to `git`, which on a GitHub runner
+is unauthenticated — public repos resolve, private ones fail with
+`authentication required`. Add a PAT as `APPS_REPO_TOKEN` in the `k3s`
+environment and the workflow rewrites it into the clone URL. Locally your own
+git credentials already cover it.
+
+It has to be a **classic** PAT with the `repo` scope. A fine-grained token can
+only reach repositories owned by the token's own account, and `PetApp` belongs
+to another user's account — a fine-grained token cannot be granted access to it
+at all, however the permissions are set.
+
+Without the secret, public apps still sync and the job logs a notice for the
+private ones.
 
 ## Conventions
 
