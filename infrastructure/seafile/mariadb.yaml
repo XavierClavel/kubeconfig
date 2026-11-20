@@ -1,0 +1,104 @@
+# Seafile keeps accounts, library metadata and share links in MariaDB; the file
+# contents themselves are on the seafile-data volume. Both are needed to restore
+# a server, and they must be backed up together.
+apiVersion: v1
+kind: Service
+metadata:
+  name: seafile-mariadb
+spec:
+  # Headless: there is exactly one pod, so there is nothing to load balance.
+  clusterIP: None
+  selector:
+    app: seafile-mariadb
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seafile-mariadb
+spec:
+  serviceName: seafile-mariadb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seafile-mariadb
+  template:
+    metadata:
+      labels:
+        app: seafile-mariadb
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: mariadb
+          # The version Seafile 14.0 is tested against. 10.11 is an LTS series;
+          # check Seafile's upgrade notes before moving to another one.
+          image: mariadb:10.11
+          env:
+            # Only used to initialise an empty data directory. Seafile uses the
+            # same password on its first start to create its databases and its
+            # own `seafile` user.
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seafile-secret
+                  key: INIT_SEAFILE_MYSQL_ROOT_PASSWORD
+            - name: MYSQL_LOG_CONSOLE
+              value: "true"
+            # Runs mariadb-upgrade automatically after an image bump.
+            - name: MARIADB_AUTO_UPGRADE
+              value: "1"
+          ports:
+            - name: mysql
+              containerPort: 3306
+          # Same check as the healthcheck in Seafile's own compose file.
+          startupProbe:
+            exec:
+              command:
+                - /usr/local/bin/healthcheck.sh
+                - --connect
+                - --mariadbupgrade
+                - --innodb_initialized
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command:
+                - /usr/local/bin/healthcheck.sh
+                - --connect
+                - --innodb_initialized
+            periodSeconds: 20
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - /usr/local/bin/healthcheck.sh
+                - --connect
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 25m
+              memory: 192Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    # Produces the PVC `data-seafile-mariadb-0`. Renaming the template or the
+    # StatefulSet orphans the volume and starts MariaDB on an empty disk.
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            # k3s' local-path provisioner does not enforce this: the volume is a
+            # plain directory on the node and can grow until the disk is full.
+            storage: 5Gi

@@ -1,0 +1,69 @@
+# Cache only. It is deliberately not persisted (no volume, no RDB, no AOF):
+# everything in it is rebuilt from MariaDB, so losing it on a restart costs a few
+# slow page loads and logs every web session out.
+apiVersion: v1
+kind: Service
+metadata:
+  name: seafile-redis
+spec:
+  selector:
+    app: seafile-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seafile-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seafile-redis
+  template:
+    metadata:
+      labels:
+        app: seafile-redis
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          # The Service is reachable from every namespace of the cluster, hence
+          # the password. --maxmemory keeps Redis below the container limit, so
+          # it evicts old cache entries instead of being OOM-killed.
+          command:
+            - /bin/sh
+            - -c
+            - >-
+              exec redis-server
+              --requirepass "$REDIS_PASSWORD"
+              --save ""
+              --appendonly no
+              --maxmemory 96mb
+              --maxmemory-policy allkeys-lru
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seafile-secret
+                  key: REDIS_PASSWORD
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

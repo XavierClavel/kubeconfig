@@ -17,6 +17,7 @@ infrastructure/
   cert-manager/                 letsencrypt-prod / letsencrypt-staging ClusterIssuers
   traefik/                      HelmChartConfig customising the k3s-bundled Traefik
   kafka/                        Strimzi Kafka cluster + node pool
+  seafile/                      Seafile file sync server + its MariaDB and Redis
 bootstrap/
   install.sh                    idempotent Helm install of the operators
   versions.env                  pinned chart versions
@@ -97,6 +98,65 @@ spec:
   partitions: 3
   replicas: 1
 ```
+
+### Seafile
+
+File sync and backup server, in the `seafile` namespace. It is a third-party
+image with no repository of its own, which is why it lives here rather than in a
+project repo: Seafile 14.0 Community Edition, plus the MariaDB and Redis it
+needs. SeaDoc, the notification server and the other optional extensions are
+not deployed.
+
+The hostname is set in one place, `SEAFILE_SERVER_HOSTNAME` in
+[`infrastructure/seafile/config.yaml`](infrastructure/seafile/config.yaml);
+kustomize copies it into the Ingress.
+
+**First install.** Passwords are not in git, so the Secret has to exist before
+the pods can start (until then they sit in `CreateContainerConfigError`, and
+recover on their own once it is created):
+
+```bash
+kubectl create namespace seafile
+kubectl create secret generic seafile-secret -n seafile \
+  --from-literal=JWT_PRIVATE_KEY="$(openssl rand -hex 32)" \
+  --from-literal=SEAFILE_MYSQL_DB_PASSWORD="$(openssl rand -hex 24)" \
+  --from-literal=INIT_SEAFILE_MYSQL_ROOT_PASSWORD="$(openssl rand -hex 24)" \
+  --from-literal=REDIS_PASSWORD="$(openssl rand -hex 24)" \
+  --from-literal=INIT_SEAFILE_ADMIN_PASSWORD='<pick one>'
+```
+
+Point the DNS record at the VPS, apply, and wait -- the first start creates the
+databases and takes a few minutes:
+
+```bash
+kubectl apply -k .
+kubectl get pods -n seafile -w
+kubectl logs -n seafile deploy/seafile -f
+```
+
+Then log in with `INIT_SEAFILE_ADMIN_EMAIL` and the password chosen above. Both
+are only read on that first start.
+
+Things to know:
+
+- **Memory.** The three pods request about 0.75 GiB together and are capped at
+  about 2.6 GiB (Seafile 2 GiB, MariaDB 512 MiB, Redis 128 MiB).
+- **Configuration changes** need `kubectl rollout restart deployment/seafile -n
+  seafile`; the container only reads its environment at start-up.
+- **Data is in two volumes that belong together**: `seafile-data` (file
+  contents, stored as deduplicated blocks -- not browsable as plain files) and
+  `data-seafile-mariadb-0` (accounts, library metadata, share links). A copy of
+  one without the other cannot be restored.
+- **The volumes have no size limit.** `local-path` ignores the requested size,
+  so Seafile can fill the VPS disk; file history and the trash count too. Set a
+  history retention per library, and run Seafile's garbage collector to actually
+  free deleted blocks.
+- **Large uploads through the browser** are a single HTTP request. If they are
+  cut off after a minute, the cause is Traefik's entry point `readTimeout`
+  (60 s by default in recent versions), raised with
+  `ports.websecure.transport.respondingTimeouts.readTimeout` in
+  [`infrastructure/traefik/helmchartconfig.yaml`](infrastructure/traefik/helmchartconfig.yaml).
+  The desktop client uploads in small blocks and is not affected.
 
 ### Nothing is pruned
 
@@ -185,8 +245,11 @@ changes, and on demand via the `run_bootstrap` input of a manual dispatch.
      Kafka's volume is `data-kafka-kraft-kraft-nodes-0`; stop it by annotating
      the `Kafka` resource with `strimzi.io/pause-reconciliation: "true"` and then
      scaling the StatefulSet to 0, otherwise you copy a torn log segment.
-   - **Application Secrets.** `cooknco-secrets`, `cooknco-config` and friends are
-     not in git. Dump and re-apply them:
+     Seafile's are `seafile-data` and `data-seafile-mariadb-0`; scale
+     `deployment/seafile` and `statefulset/seafile-mariadb` to 0 first and copy
+     both, they are only consistent as a pair.
+   - **Application Secrets.** `cooknco-secrets`, `cooknco-config`, `seafile-secret`
+     and friends are not in git. Dump and re-apply them:
 
      ```bash
      kubectl --kubeconfig old.yaml get secret -n <ns> <name> -o yaml \

@@ -5,3 +5,4 @@ kind: Kustomization
 # by the other components never touches them.
 resources:
   - kafka.yaml
+  - seafile.yaml
