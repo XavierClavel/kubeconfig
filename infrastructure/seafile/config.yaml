@@ -1,0 +1,50 @@
+# Non-secret settings for the Seafile container, loaded with `envFrom`.
+#
+# The container only reads its environment at start-up, and nothing restarts it
+# when this ConfigMap changes. After editing a value:
+#
+#   kubectl rollout restart deployment/seafile -n seafile
+#
+# Passwords and the JWT key are NOT here -- they are in the `seafile-secret`
+# Secret, which is created by hand (see README.md) and never committed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seafile-env
+data:
+  # The one place the public hostname is set: kustomization.yaml copies it into
+  # the Ingress. The DNS record must point at the VPS before this is applied,
+  # otherwise cert-manager's HTTP-01 challenge fails.
+  SEAFILE_SERVER_HOSTNAME: "seafile.example.com"
+  # Traefik terminates TLS and talks plain HTTP to the pod. Seafile still has to
+  # know the public scheme, because it builds download and upload URLs from it.
+  SEAFILE_SERVER_PROTOCOL: "https"
+  SITE_ROOT: "/"
+  TIME_ZONE: "Europe/Paris"
+  # Without this the logs only exist as files on the data volume and
+  # `kubectl logs` shows nothing useful.
+  SEAFILE_LOG_TO_STDOUT: "true"
+
+  # Database -- the MariaDB StatefulSet in mariadb.yaml.
+  SEAFILE_MYSQL_DB_HOST: "seafile-mariadb"
+  SEAFILE_MYSQL_DB_PORT: "3306"
+  SEAFILE_MYSQL_DB_USER: "seafile"
+  SEAFILE_MYSQL_DB_CCNET_DB_NAME: "ccnet_db"
+  SEAFILE_MYSQL_DB_SEAFILE_DB_NAME: "seafile_db"
+  SEAFILE_MYSQL_DB_SEAHUB_DB_NAME: "seahub_db"
+
+  # Cache -- the Redis Deployment in redis.yaml.
+  CACHE_PROVIDER: "redis"
+  REDIS_HOST: "seafile-redis"
+  REDIS_PORT: "6379"
+
+  # Optional extensions. Each one is a separate server that is not deployed
+  # here; turning a flag on without deploying its server breaks the feature in
+  # the web UI. File sync, sharing and history need none of them.
+  ENABLE_SEADOC: "false"
+  ENABLE_NOTIFICATION_SERVER: "false"
+  ENABLE_SEAFILE_AI: "false"
+
+  # Only read on the very first start, when the databases are created. Changing
+  # it later does nothing: manage accounts from the web UI instead.
+  INIT_SEAFILE_ADMIN_EMAIL: "xrclavel@gmail.com"

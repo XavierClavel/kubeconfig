@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: seafile
+
+resources:
+  - config.yaml
+  - mariadb.yaml
+  - redis.yaml
+  - seafile.yaml
+  - ingress.yaml
+
+# The public hostname is set once, in config.yaml. Seafile needs it as an
+# environment variable and the Ingress needs it twice; copying it here keeps the
+# three from drifting apart.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: seafile-env
+      fieldPath: data.SEAFILE_SERVER_HOSTNAME
+    targets:
+      - select:
+          kind: Ingress
+          name: seafile
+        fieldPaths:
+          - spec.rules.0.host
+          - spec.tls.0.hosts.0

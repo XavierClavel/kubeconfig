@@ -1,0 +1,27 @@
+# Follows the cluster convention (README.md): cert-manager issues the
+# certificate, Traefik only serves the Secret it lands in.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: seafile
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        # Overwritten by kustomization.yaml with SEAFILE_SERVER_HOSTNAME from
+        # config.yaml. Change the hostname there, not here.
+        - seafile.example.com
+      secretName: seafile-tls
+  rules:
+    - host: seafile.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: seafile
+                port:
+                  name: http

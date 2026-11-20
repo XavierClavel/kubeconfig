@@ -14,3 +14,4 @@ resources:
   - infrastructure/cert-manager
   - infrastructure/traefik
   - infrastructure/kafka
+  - infrastructure/seafile

@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seafile-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Nominal. k3s' local-path provisioner does not enforce it: the volume is
+      # a directory under /var/lib/rancher/k3s/storage on the node, and the real
+      # limit is the free space on the VPS disk. Watch `df -h` there.
+      storage: 50Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seafile
+spec:
+  selector:
+    app: seafile
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seafile
+spec:
+  replicas: 1
+  # The data volume is ReadWriteOnce and Seafile CE is a single-instance server:
+  # the old pod has to be gone before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: seafile
+  template:
+    metadata:
+      labels:
+        app: seafile
+    spec:
+      # A Service named `seafile` makes Kubernetes inject SEAFILE_PORT and
+      # friends into every pod of the namespace, which collide with the
+      # SEAFILE_* variables the image reads.
+      enableServiceLinks: false
+      containers:
+        - name: seafile
+          # The 14.0 series, as published by Seafile. The tag moves with patch
+          # releases, but the node keeps whichever image it pulled first: to
+          # take a newer release, replace this with its exact tag from Docker
+          # Hub, after reading Seafile's upgrade notes.
+          image: seafileltd/seafile-mc:14.0-latest
+          envFrom:
+            - configMapRef:
+                name: seafile-env
+            - secretRef:
+                name: seafile-secret
+          ports:
+            - name: http
+              containerPort: 80
+          # Same check as the healthcheck in Seafile's own compose file. The
+          # first start creates the databases and can take a few minutes, so the
+          # startup probe allows ten before the pod is restarted.
+          startupProbe:
+            exec:
+              command: ["curl", "-fsS", "-o", "/dev/null", "http://localhost:80"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["curl", "-fsS", "-o", "/dev/null", "http://localhost:80"]
+            periodSeconds: 20
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["curl", "-fsS", "-o", "/dev/null", "http://localhost:80"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: data
+              mountPath: /shared
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: seafile-data
